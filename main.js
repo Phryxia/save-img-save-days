@@ -1,29 +1,53 @@
-const http = require('http');
 const request = require('request');
 const cheerio = require('cheerio');
 const PixivAppApi = require('pixiv-app-api');
 const PixivImg = require('pixiv-img');
+const TelegramBot = require('node-telegram-bot-api');
 const assert = require('assert');
 const fs = require('fs');
 
-// Load pixiv api
-if(!process.argv[2] || !process.argv[3]) {
-	console.log('usage: node main.js {pixiv id} {pixi pw}');
+// argument check
+if(!process.argv[2] || !process.argv[3] || !process.argv[4]) {
+	console.log('usage: node main.js {token} {pixiv id} {pixi pw}');
 	exit();
 }
-const pixiv = new PixivAppApi(process.argv[2], process.argv[3]);
-console.log('Success to login in in pixiv');
 
-// http.createServer(function(req, res) {
-// 	/*
-// 		HTTP Header 전송
-// 		HTTP Status: 200: OK
-// 		Content Type: text/plain
-// 	*/
-// 	res.writeHead(200, {'Content-Type': 'text/plain'});
+// load telegram api
+const token = process.argv[2];
+const tbot = new TelegramBot(token, {polling: true});
+const TELEGRAM_URL = 'https://api.telegram.org/file/bot' + token + '/';
+console.log('[SYSTEM] TelegramBot is created successfuly!');
 
-// 	res.end('hello world\n');
-// }).listen(4577);
+// load pixiv api
+const pixiv = new PixivAppApi(process.argv[3], process.argv[4]);
+console.log('[SYSTEM] Succeed to login in in pixiv');
+
+// bot test code
+tbot.onText(/\/test/, (msg, match) => {
+	tbot.sendMessage(msg.chat.id, 'hello~');
+});
+
+// 직접 봇에게 이미지 공유를 한 경우
+tbot.on('photo', msg => {
+	const file_id = msg.photo[msg.photo.length - 1].file_id;
+	tbot.getFile(file_id)
+		.then(res => {
+			save_img(TELEGRAM_URL + res.file_path);
+			console.log('[SYSTEM] Succeed to download user sent image');
+		})
+		.catch(err => {
+			console.log('[WARNING] Failed to download image from msg[' + msg.chat.id + ']');
+			console.log(err);
+		});
+});
+
+// URL이 포함된 메시지를 공유한 경우
+tbot.on('message', msg => {
+	msg.entities.forEach(entity => {
+		if(entity.type == 'url')
+			classify_url(msg.text.slice(entity.offset, entity.offset + entity.length));
+	});
+});
 
 let save_path = 'D:\\images\\out\\';
 
@@ -33,6 +57,7 @@ try {
 	if(!fs.existsSync(save_path))
 		fs.mkdirSync(save_path);
 } catch(e) {
+	console.log('[ERROR] Error occured while making new directory: '+ save_path);
 	console.log(e);
 }
 
@@ -41,17 +66,12 @@ let REGEX_TWITTER = /twitter\.com/;
 let REGEX_FILENAME = /[^/]+\.[a-z0-9]*$/i;
 let REGEX_PIXIV = /pixiv\.net/;
 
-// Open url and extract the image
-//let url = 'https://twitter.com/dawn4ir/status/1123125089359155201?s=09';
-let url = 'https://www.pixiv.net/member_illust.php?illust_id=73097835&mode=medium';
-classify_url(url);
-
 /*
 	Check url and return the proper finder
 	to extract image. If there is no matched
 	finder, return null.
 */
-function classify_url(url, on_finish) {
+function classify_url(url) {
 	if(REGEX_TWITTER.test(url))
 		find_img_url_twitter(url);
 	else if(REGEX_PIXIV.test(url))
@@ -115,20 +135,16 @@ function find_img_url_pixiv(url) {
 	// process
 	pixiv.illustDetail(img_id)
 		.then(json => {
-			// fetch image meta data
-			json.illust.metaPages.forEach(meta_info => {
-				// extract filename from url and make output path
-				let img_url = meta_info.imageUrls.original;
-				let fname = img_url.match(REGEX_FILENAME)[0];
-				PixivImg(img_url, save_path + '/' + fname)
-					.then(out => {
-						console.log('Finished downloading: ' + out);
-					})
-					.catch(err => {
-						console.log('[WARNING] find_img_url_pixiv: error has been occured while saving image');
-						console.log(err.message);
-					});
-			});
+			if(json.illust.metaPages.length > 0) {
+				// Case when there are more than one image
+				json.illust.metaPages.forEach(meta_info => {
+					// extract filename from url and make output path
+					save_img_pixiv(meta_info.imageUrls.original);
+				});
+			} else {
+				// Case when there is only one image
+				save_img_pixiv(json.illust.imageUrls.large);
+			}
 		})
 		.catch(err => {
 			console.log('[WARNING] find_img_url_pixiv: error has been occured while fetching metadata');
@@ -144,8 +160,7 @@ function find_img_url_pixiv(url) {
 	이 경우 다른 방법을 생각해내야 한다.
 */
 function save_img(url) {
-	let fname = url.match(REGEX_FILENAME);
-	console.log('detect ' + fname);
+	let fname = extract_filename(url);
 	let fos = fs.createWriteStream(save_path + '/' + fname[0]);
 	let stream = request({
 		uri: url
@@ -157,3 +172,31 @@ function save_img(url) {
 		console.log(err);
 	});
 };
+
+/**
+	pixiv는 전용 API를 이용하여 다운로드해야 한다.
+*/
+function save_img_pixiv(url) {
+	let fname = extract_filename(url);
+	PixivImg(url, save_path + '/' + fname)
+		.then(out => {
+			console.log('Finished downloading: ' + out);
+		})
+		.catch(err => {
+			console.log('[WARNING] save_img_pixiv: error has been occured while saving image');
+			console.log(err.message);
+		});
+};
+
+/**
+	url에서 디렉토리를 제외한 순수 이미지 파일이름만 추출한다.
+	그런게 없으면 null을 반환한다.
+*/
+function extract_filename(url) {
+	let fname = url.match(REGEX_FILENAME);
+	if(fname == null) {
+		console.log('[WARNING] cannot extract filename');
+		console.log('   from: ' + url);
+	}
+	return fname;
+}
