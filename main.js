@@ -12,6 +12,13 @@ if(!process.argv[2] || !process.argv[3] || !process.argv[4]) {
 	exit();
 }
 
+// define regular expression with frequently used
+let REGEX_URL = /http(s)?:/;
+let REGEX_TWITTER = /twitter\.com/;
+let REGEX_FILENAME = /[^/]+\.[a-z0-9]*$/i;
+let REGEX_PIXIV = /pixiv\.net/;
+let REGEX_RULIWEB = /ruliweb\.com/;
+
 let save_path = 'D:\\images\\out\\';
 
 // load telegram api
@@ -64,10 +71,7 @@ try {
 	console.log(e);
 }
 
-// define regular expression with frequently used
-let REGEX_TWITTER = /twitter\.com/;
-let REGEX_FILENAME = /[^/]+\.[a-z0-9]*$/i;
-let REGEX_PIXIV = /pixiv\.net/;
+
 
 /*
 	Check url and return the proper finder
@@ -79,6 +83,8 @@ function classify_url(url) {
 		find_img_url_twitter(url);
 	else if(REGEX_PIXIV.test(url))
 		find_img_url_pixiv(url);
+	else if(REGEX_RULIWEB.test(url))
+		find_img_url_ruliweb(url);
 	else {
 		console.log('[WARNING] classify_url: Cannot classify the given url:');
 		console.log(url);
@@ -166,6 +172,37 @@ function find_img_url_pixiv(url) {
 			console.log('caused by');
 			console.log(err);
 		});
+}
+
+/*
+	이 사이트는 좀 이상해서 이미지 URI에 https가 붙어있는
+	경우도 있고 없는 경우도 있다. 때문에 잘 구분을 해줘야 한다.
+
+	구조
+
+	<div class='view_content'>
+		<div class='row'>
+			<p ~>
+				<span ~>
+					<a ~>
+						<img class='lazy_read'
+*/
+function find_img_url_ruliweb(url) {
+	assert.ok(url);
+	console.log('[SYSTEM] Classified as Ruliweb');
+	request(url, function(err, res, body) {
+		if(err)
+			console.log(err);
+		let $ = cheerio.load(body);
+		let result = $('div.view_content')
+			.find('img')
+			.each((idx, val)=>{
+				let uri = $(val).attr('src');
+				if(!REGEX_URL.test(uri))
+					uri = 'https:' + uri;
+				save_img(uri);
+			});
+	});
 }
 
 /*
