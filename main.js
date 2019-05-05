@@ -12,6 +12,8 @@ if(!process.argv[2] || !process.argv[3] || !process.argv[4]) {
 	exit();
 }
 
+let save_path = 'D:\\images\\out\\';
+
 // load telegram api
 const token = process.argv[2];
 const tbot = new TelegramBot(token, {polling: true});
@@ -29,27 +31,28 @@ tbot.onText(/\/test/, (msg, match) => {
 
 // 직접 봇에게 이미지 공유를 한 경우
 tbot.on('photo', msg => {
+	console.log('[SYSTEM] Direct photo has been detected');
 	const file_id = msg.photo[msg.photo.length - 1].file_id;
 	tbot.getFile(file_id)
 		.then(res => {
 			save_img(TELEGRAM_URL + res.file_path);
-			console.log('[SYSTEM] Succeed to download user sent image');
 		})
 		.catch(err => {
-			console.log('[WARNING] Failed to download image from msg[' + msg.chat.id + ']');
+			console.log('[WARNING] Failed to download image from msg:');
+			console.log(msg);
+			console.log('caused by');
 			console.log(err);
 		});
 });
 
 // URL이 포함된 메시지를 공유한 경우
-tbot.on('message', msg => {
+tbot.onText(/http(s)?:\/\//, (msg, match) => {
+	console.log('[SYSTEM] URL has been detected');
 	msg.entities.forEach(entity => {
 		if(entity.type == 'url')
 			classify_url(msg.text.slice(entity.offset, entity.offset + entity.length));
 	});
 });
-
-let save_path = 'D:\\images\\out\\';
 
 // Check whether there is proper save path.
 // If there is no such path, create new one.
@@ -77,7 +80,7 @@ function classify_url(url) {
 	else if(REGEX_PIXIV.test(url))
 		find_img_url_pixiv(url);
 	else {
-		console.log('[WARNING] Cannot classify the given url:');
+		console.log('[WARNING] classify_url: Cannot classify the given url:');
 		console.log(url);
 	}
 }
@@ -93,13 +96,24 @@ function classify_url(url) {
 	구조가 조금씩 다르기는 하지만, 확실한 건 추출해야 할 이미지는
 	반드시 이 DOM 내부에 다 들어있다는 것이다.
 
-	2019-04-30 기준
+	위에 것만 적용했더니 답글에 있는 이미지까지 끌어와서, 좀 더
+	스코프를 좁혀야 한다. 전체 스코프는 다음과 같다.
+
+	<div class='permalink-inner ...'>
+		<div class='~'>
+			<div class='AdaptiveMedia-container'>
+				<div ~>
+					<div ~
+						<div ~>
+							<img data-aria-label-part src="url" ~>
+	2019-05-05 기준
 */
 function find_img_url_twitter(url) {
 	assert.ok(url);
+	console.log('[SYSTEM] Classified as Twitter');
 	request(url, function(err, res, body) {
 		let $ = cheerio.load(body);
-		let result = $('.AdaptiveMedia-container')
+		let result = $('.permalink-inner .AdaptiveMedia-container')
 			.find('img')
 			.each((idx, val)=>{
 				save_img($(val).attr('src'));
@@ -126,11 +140,11 @@ function find_img_url_twitter(url) {
 */
 function find_img_url_pixiv(url) {
 	assert.ok(url);
+	console.log('[SYSTEM] Classified as Pixiv');
 
 	// extract image id
 	let img_id = url.match(/illust_id=[0-9]+/)[0];
 	img_id = img_id.match(/[0-9]+/)[0];
-	console.log('try to fetch ' + img_id);
 	
 	// process
 	pixiv.illustDetail(img_id)
@@ -148,7 +162,9 @@ function find_img_url_pixiv(url) {
 		})
 		.catch(err => {
 			console.log('[WARNING] find_img_url_pixiv: error has been occured while fetching metadata');
-			console.log(err.message);
+			console.log(url);
+			console.log('caused by');
+			console.log(err);
 		});
 }
 
@@ -165,7 +181,7 @@ function save_img(url) {
 	let stream = request({
 		uri: url
 	}).pipe(fos).on('finish', () => {
-		console.log('Finished downloading: ' + fname[0]);
+		console.log('[SYSTEM] Finished downloading: ' + fname[0]);
 		console.log('  from ' + url);
 	}).on('error', (err) => {
 		console.log('[WARNING] save_img: error has been occured from fs:');
@@ -180,7 +196,7 @@ function save_img_pixiv(url) {
 	let fname = extract_filename(url);
 	PixivImg(url, save_path + '/' + fname)
 		.then(out => {
-			console.log('Finished downloading: ' + out);
+			console.log('[SYSTEM] Finished downloading: ' + out);
 		})
 		.catch(err => {
 			console.log('[WARNING] save_img_pixiv: error has been occured while saving image');
