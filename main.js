@@ -20,6 +20,7 @@ let REGEX_PIXIV = /pixiv\.net/;
 let REGEX_RULIWEB = /ruliweb\.com/;
 
 let save_path = 'D:\\images\\out\\';
+const DELAY = 250;
 
 // load telegram api
 const token = process.argv[2];
@@ -54,7 +55,8 @@ tbot.on('photo', msg => {
 
 // URL이 포함된 메시지를 공유한 경우
 tbot.onText(/http(s)?:\/\//, (msg, match) => {
-	console.log('[SYSTEM] URL has been detected');
+	console.log('[SYSTEM] URL has been detected in:');
+	console.log('   ' + msg.text);
 	msg.entities.forEach(entity => {
 		if(entity.type == 'url')
 			classify_url(msg.text.slice(entity.offset, entity.offset + entity.length));
@@ -122,7 +124,9 @@ function find_img_url_twitter(url) {
 		let result = $('.permalink-inner .AdaptiveMedia-container')
 			.find('img')
 			.each((idx, val)=>{
-				save_img($(val).attr('src'));
+				setTimeout(() => {
+					save_img($(val).attr('src'));
+				}, idx * DELAY);
 			});
 	});
 };
@@ -157,7 +161,7 @@ function find_img_url_pixiv(url) {
 		.then(json => {
 			if(json.illust.metaPages.length > 0) {
 				// Case when there are more than one image
-				json.illust.metaPages.forEach(meta_info => {
+				delayed_forEach(json.illust.metaPages, DELAY, meta_info => {
 					// extract filename from url and make output path
 					save_img_pixiv(meta_info.imageUrls.original);
 				});
@@ -197,10 +201,12 @@ function find_img_url_ruliweb(url) {
 		let result = $('div.view_content')
 			.find('img')
 			.each((idx, val)=>{
-				let uri = $(val).attr('src');
-				if(!REGEX_URL.test(uri))
-					uri = 'https:' + uri;
-				save_img(uri);
+				setTimeout(() => {
+					let uri = $(val).attr('src');
+					if(!REGEX_URL.test(uri))
+						uri = 'https:' + uri;
+					save_img(uri);
+				}, idx * DELAY);
 			});
 	});
 }
@@ -252,4 +258,16 @@ function extract_filename(url) {
 		console.log('   from: ' + url);
 	}
 	return fname;
+}
+
+/**
+	밴 안먹기 위한 대응책
+	forEach의 콜백이 비동기인 경우, 매우 빠른 속도로
+	서버에 요청을 날릴 수 있다. 이를 방지하기 위한 것.
+*/
+function delayed_forEach(arr, delay, callback) {
+	assert.ok(arr instanceof Array);
+	arr.forEach((val, idx, arr) => {
+		setTimeout(callback, idx * delay, val, idx, arr);
+	});
 }
