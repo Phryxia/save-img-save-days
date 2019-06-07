@@ -5,8 +5,6 @@ const PixivImg = require('pixiv-img');
 const TelegramBot = require('node-telegram-bot-api');
 const assert = require('assert');
 const fs = require('fs');
-const Queue = require('better-queue');
-const jsonfile = require('jsonfile');
 
 // argument check
 if(!process.argv[2] || !process.argv[3] || !process.argv[4]) {
@@ -34,6 +32,37 @@ console.log('[SYSTEM] TelegramBot is created successfuly!');
 const pixiv = new PixivAppApi(process.argv[3], process.argv[4]);
 console.log('[SYSTEM] Succeed to login in in pixiv');
 
+// bot test code
+tbot.onText(/\/test/, (msg, match) => {
+	tbot.sendMessage(msg.chat.id, 'hello~');
+});
+
+// 직접 봇에게 이미지 공유를 한 경우
+tbot.on('photo', msg => {
+	console.log('[SYSTEM] Direct photo has been detected');
+	const file_id = msg.photo[msg.photo.length - 1].file_id;
+	tbot.getFile(file_id)
+		.then(res => {
+			save_img(TELEGRAM_URL + res.file_path);
+		})
+		.catch(err => {
+			console.log('[WARNING] Failed to download image from msg:');
+			console.log(msg);
+			console.log('caused by');
+			console.log(err);
+		});
+});
+
+// URL이 포함된 메시지를 공유한 경우
+tbot.onText(/http(s)?:\/\//, (msg, match) => {
+	console.log('[SYSTEM] URL has been detected in:');
+	console.log('   ' + msg.text);
+	msg.entities.forEach(entity => {
+		if(entity.type == 'url')
+			classify_url(msg.text.slice(entity.offset, entity.offset + entity.length));
+	});
+});
+
 // Check whether there is proper save path.
 // If there is no such path, create new one.
 try {
@@ -44,92 +73,7 @@ try {
 	console.log(e);
 }
 
-// load machine state file
-const STATE_FILE_PATH = '/state.json';
-let state = jsonfile.readFileSync(STATE_FILE_PATH, {'throws':false});
-if(state == null) {
-	// file has not been loaded properly
-	state = {
-		last_chat_id: null
-	};
-}
-if(state.last_chat_id != null) {
-	tbot.sendMessage(state.last_chat_id, 'IIONA 부팅 완료');
-}
 
-/*
-	POST IMAGE ROUTING
-*/
-let queued_cnt = 0;
-let success_cnt = 0;
-let task_queue = new Queue(function(input, cb) {
-	// input[0] is processing function
-	// input[1] is target message
-	update_chat_id(input[1]);
-	queued_cnt += 1;
-	input[0](input[1], cb);
-});
-
-task_queue.on('task_finish', function(task_id, result, stats) {
-	success_cnt += 1;
-});
-
-task_queue.on('drain', function() {
-	// report to user the result of processing
-	tbot.sendMessage(state.last_chat_id, `작업완료: 총 ${queued_cnt}개, 성공 ${success_cnt}개`);
-	queued_cnt = 0;
-	success_cnt = 0;
-});
-
-//tbot.sendMessage()
-
-function update_chat_id(msg) {
-	state.last_chat_id = msg.chat.id;
-	jsonfile.writeFileSync(STATE_FILE_PATH, state);
-};
-
-// bot test code
-tbot.onText(/\/test/, (msg, match) => {
-	tbot.sendMessage(msg.chat.id, 'hello~');
-});
-
-// 직접 봇에게 이미지 공유를 한 경우
-tbot.on('photo', msg => {
-	task_queue.push([async (msg, queue_cb) => {
-		const file_id = msg.photo[msg.photo.length - 1].file_id;
-		try {
-			let res = await tbot.getFile(file_id); 
-			await save_img(TELEGRAM_URL + res.file_path);
-			queue_cb(null, true);
-		}
-		catch(err) {
-			console.log('[WARNING] Failed to download image from msg:');
-			console.log(msg);
-			console.log('caused by');
-			console.log(err);
-			queue_cb(null, false);
-		}
-	}, msg]);
-});
-
-// URL이 포함된 메시지를 공유한 경우
-tbot.onText(/http(s)?:\/\//, (msg, match) => {
-	task_queue.push([async (msg, queue_cb) => {
-		console.log('[SYSTEM] URL has been detected in:');
-		console.log('   ' + msg.text);
-		try {
-			msg.entities.forEach(async (entity) => {
-				if(entity.type == 'url')
-					await classify_url(msg.text.slice(entity.offset, entity.offset + entity.length));
-			});			
-			queue_cb(null, true);
-		}
-		catch(e) {
-			console.log(e);
-			queue_cb(null, false);
-		}
-	}, msg]);
-});
 
 /*
 	Check url and return the proper finder
@@ -137,24 +81,16 @@ tbot.onText(/http(s)?:\/\//, (msg, match) => {
 	finder, return null.
 */
 function classify_url(url) {
-	return new Promise(async (resolve, reject) => {
-		try {
-			if(REGEX_TWITTER.test(url))
-				await find_img_url_twitter(url);
-			else if(REGEX_PIXIV.test(url))
-				find_img_url_pixiv(url);
-			else if(REGEX_RULIWEB.test(url))
-				find_img_url_ruliweb(url);
-			else {
-				console.log('[WARNING] classify_url: Cannot classify the given url:');
-				console.log(url);
-			}
-			resolve();
-		}
-		catch(err) {
-			reject(err);
-		}
-	});
+	if(REGEX_TWITTER.test(url))
+		find_img_url_twitter(url);
+	else if(REGEX_PIXIV.test(url))
+		find_img_url_pixiv(url);
+	else if(REGEX_RULIWEB.test(url))
+		find_img_url_ruliweb(url);
+	else {
+		console.log('[WARNING] classify_url: Cannot classify the given url:');
+		console.log(url);
+	}
 }
 
 /*
@@ -183,30 +119,15 @@ function classify_url(url) {
 function find_img_url_twitter(url) {
 	assert.ok(url);
 	console.log('[SYSTEM] Classified as Twitter');
-	return new Promise(async (resolve, reject) => {
-		request(url, (err, res, body) => {
-			if(!!err) {
-				console.log('[ERROR] find_img_url_twitter failed to parse page');
-				console.log('caused by:');
-				console.log(err);
-				reject(err);
-			}
-			else {
-				let $ = cheerio.load(body);
-				try {
-					let result = $('.permalink-inner .AdaptiveMedia-container')
-						.find('img')
-						.each(async (idx, val)=>{
-							console.log($(val).attr('src'));
-							await save_img($(val).attr('src'));
-						});
-					resolve();
-				}
-				catch(err) {
-					reject(err);
-				}
-			}
-		});
+	request(url, function(err, res, body) {
+		let $ = cheerio.load(body);
+		let result = $('.permalink-inner .AdaptiveMedia-container')
+			.find('img')
+			.each((idx, val)=>{
+				setTimeout(() => {
+					save_img($(val).attr('src'));
+				}, idx * DELAY);
+			});
 	});
 };
 
@@ -298,26 +219,16 @@ function find_img_url_ruliweb(url) {
 	이 경우 다른 방법을 생각해내야 한다.
 */
 function save_img(url) {
-	return new Promise(async (resolve, reject) => {
-		let fname = extract_filename(url);
-		console.log('FILE NAME = ' + fname);
-		let fos = fs.createWriteStream(save_path + '/' + fname[0]);
-		try {
-			request(url)
-			.pipe(fos)
-			.on('finish', () => {
-				console.log('[SYSTEM] Finished downloading: ' + fname[0]);
-				console.log('  from ' + url);
-				resolve();
-			})
-			.on('error', (err) => {
-				console.log('[WARNING] save_img: error has been occured from fs:');
-				console.log(err);
-				reject(err);
-			});
-		} catch(e) {
-			reject(err);
-		}
+	let fname = extract_filename(url);
+	let fos = fs.createWriteStream(save_path + '/' + fname[0]);
+	let stream = request({
+		uri: url
+	}).pipe(fos).on('finish', () => {
+		console.log('[SYSTEM] Finished downloading: ' + fname[0]);
+		console.log('  from ' + url);
+	}).on('error', (err) => {
+		console.log('[WARNING] save_img: error has been occured from fs:');
+		console.log(err);
 	});
 };
 
