@@ -99,35 +99,25 @@ function classify_url(url) {
 	한 장이라는 보장은 없다. 계정 헤더나 프로필 사진 역시 이런
 	주소가 포함돼 있다.
 
-	트윗에 올린 이미지는 <div class='AdaptiveMedia-container'>
-	의 자식 DOM에 존재한다. 업로드된 이미지의 숫자에 따라 내부
-	구조가 조금씩 다르기는 하지만, 확실한 건 추출해야 할 이미지는
-	반드시 이 DOM 내부에 다 들어있다는 것이다.
-
-	위에 것만 적용했더니 답글에 있는 이미지까지 끌어와서, 좀 더
-	스코프를 좁혀야 한다. 전체 스코프는 다음과 같다.
-
-	<div class='permalink-inner ...'>
-		<div class='~'>
-			<div class='AdaptiveMedia-container'>
-				<div ~>
-					<div ~
-						<div ~>
-							<img data-aria-label-part src="url" ~>
-	2019-05-05 기준
+	2019-07-19에 트위터 PC 클라이언트가 패치되어서 구조가 바뀌었다.
+	거의 모든 CSS 클래스가 난독화되었으며 구분이 매우 어려워졌다.
+	그래서 우선 모든 img 태그를 가져온 뒤, 이미지의 주소에서 media
+	인 것만 다운로드 하는 것으로 전략을 바꿨다.
 */
 function find_img_url_twitter(url) {
 	assert.ok(url);
 	console.log('[SYSTEM] Classified as Twitter');
 	request(url, function(err, res, body) {
 		let $ = cheerio.load(body);
-		let result = $('.permalink-inner .AdaptiveMedia-container')
-			.find('img')
-			.each((idx, val)=>{
+		let result = $('img')
+		.each((idx, val)=>{
+			let src = $(val).attr('src');
+			if(src && src.match('media')) {
 				setTimeout(() => {
-					save_img($(val).attr('src'));
+					save_img(src);
 				}, idx * DELAY);
-			});
+			}
+		});
 	});
 };
 
